@@ -50,6 +50,7 @@ input,select{background:var(--bg);border:1px solid var(--line);border-radius:8px
 .tree .kids:not(:empty){margin-left:24px;border-left:1px dashed var(--line);padding-left:10px}.tree select{width:100%}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
 .results{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}.res{padding:8px}.res img{width:100%;height:140px;object-fit:contain;background:#0a0c10;border-radius:6px}
+.res.sel{border-color:var(--accent)}.resparts{font-size:12px;max-height:180px;overflow:auto}.resparts .mine{color:var(--ok)}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600;font-size:12px}
 .form{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .form2{display:grid;grid-template-columns:190px minmax(0,1fr);gap:10px;align-items:center}
