@@ -16,11 +16,11 @@ function placeHtml(s) {
     <div>Galactic coordinates <span class="mono">${esc(s.coords)}</span> &middot; portal glyphs <span class="mono">${esc(s.glyphs)}</span></div>
     <small class="muted">${glyphLine(s.glyphs)} (first glyph picks the planet)</small>`;
 }
-function shipCard(ship, seed, title, note) {
+function shipCard(ship, seed, title, note, preview) {
   return `<div class="card res">
     <div style="margin-top:6px"><b>${esc(title)}</b>${note ? ` <small class="muted">${note}</small>` : ''}</div>
     <div class="row" style="margin-top:6px;justify-content:space-between"><code>${esc(seed)}</code>
-      <button class="btn" data-seed="${esc(seed)}" data-ship="${esc(ship)}">Put in my save...</button></div></div>`;
+      <span class="row" style="gap:6px">${preview ? previewBtn : ''}<button class="btn" data-seed="${esc(seed)}" data-ship="${esc(ship)}">Put in my save...</button></span></div></div>`;
 }
 function freighterCard(x, home) {
   return `<div class="card res"><div><b>${esc(x.type[0].toUpperCase() + x.type.slice(1))}</b></div>
@@ -71,7 +71,7 @@ $('#dFind').onclick = () => guard(async () => {
   const ship = $('#dShip').value;
   const r = await post('/api/find/scan', {ship, want, addr: S.loc.current.ua, radius: +$('#dRad').value, n: +$('#dN').value,
     closest: $('#dClose').checked});
-  S.job = {id: r.job, ship, shown: ''}; $('#dResults').innerHTML = '';
+  S.job = {id: r.job, ship, shown: '', parts: want}; $('#dResults').innerHTML = '';
   $('#dGo').disabled = $('#dFind').disabled = true; $('#dStop').disabled = false; pollFind();
 });
 async function pollFind() {
@@ -91,8 +91,9 @@ async function pollFind() {
           : res.where === 'freighter fleet' ? 'Warps in with the freighter fleet' : 'Visits the space station'}
           <small class="muted">&middot; ${res.regions_away ? res.regions_away + ' region(s) away' : 'in your region'}</small></div>
         <div class="row" style="margin-top:6px;justify-content:space-between"><code>${res.seed}</code>
-          <button class="btn">${res.where === 'freighter fleet' ? 'Apply to your freighter' : 'Put in my save...'}</button></div>`;
-      d.querySelector('button').onclick = () => res.where === 'freighter fleet' ? applyFreighter(res.seed, job.ship, res.ua) : applySeed(res.seed, job.ship);
+          <span class="row" style="gap:6px">${previewBtn}<button class="btn" data-act="put">${res.where === 'freighter fleet' ? 'Apply to your freighter' : 'Put in my save...'}</button></span></div>`;
+      d.querySelector('[data-act="preview"]').onclick = () => guard(() => previewSeed(d, res.seed, job.ship, job.parts));
+      d.querySelector('[data-act="put"]').onclick = () => res.where === 'freighter fleet' ? applyFreighter(res.seed, job.ship, res.ua) : applySeed(res.seed, job.ship);
       box.append(d);
     }
   }

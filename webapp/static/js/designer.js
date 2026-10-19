@@ -154,9 +154,13 @@ async function loadDesign() {
   preselect(d.want);
   const seeds = d.seeds || [];
   $('#dResults').innerHTML = (d.notes ? `<p class="muted" style="grid-column:1/-1;margin:0 0 6px">${esc(d.notes)}</p>` : '')
-    + (seeds.length ? seeds.map(seed => shipCard(d.ship, seed, d.name, 'known seed')).join('')
+    + (seeds.length ? seeds.map(seed => shipCard(d.ship, seed, d.name, 'known seed', true)).join('')
        : '<p class="muted">No known seeds saved with this design -- press "Find seeds".</p>');
   wireApply($('#dResults'), d.ship);
+  $$('#dResults [data-act="preview"]').forEach(b => {
+    const card = b.closest('.res');
+    b.onclick = () => guard(() => previewSeed(card, card.querySelector('code').textContent, d.ship, d.want));
+  });
   toast(`${d.name}: ${d.want.length} parts filled in${seeds.length ? `, ${seeds.length} known seeds listed below` : ''}.`);
 }
 function wireApply(box, ship) {
@@ -275,6 +279,7 @@ const wanted = () => $$('#dTree select').filter(s => s.value !== '').map(s => JS
 let previewTimer;
 function preview() {
   clearTimeout(previewTimer);
+  clearSeedPreview();
   previewTimer = setTimeout(async () => {
     const parts = wanted(), box = $('#dPreview');
     if (!parts.length) { VIEWERS.dPreview?.destroy(); delete VIEWERS.dPreview; box.classList.remove('v3d'); box.innerHTML = '<span class="muted">Clean slate. Pick a part and it appears here, piece by piece.</span>'; return; }
@@ -283,10 +288,36 @@ function preview() {
     else show3d('dPreview', url);
   }, 150);
 }
+/* Show one found seed in the 3D view (its real shape and colours) and list every part it builds,
+   marking the ones you picked. Clicking Preview again goes back to the design. */
+const previewBtn = '<button class="btn" data-act="preview">Preview</button>';
+function clearSeedPreview() {
+  $$('#dResults .res.sel').forEach(c => c.classList.remove('sel'));
+  $$('#dResults .resparts').forEach(l => l.hidden = true);
+}
+async function previewSeed(card, seed, ship, want) {
+  const open = card.classList.contains('sel');
+  clearSeedPreview();
+  if (open) return preview();
+  clearTimeout(previewTimer);
+  card.classList.add('sel');
+  const url = modelUrl(ship, 'seed=' + encodeURIComponent(seed));
+  if (VIEWERS.dPreview) VIEWERS.dPreview.load(url).catch(e => toast(e.message, true));
+  else show3d('dPreview', url);
+  // Asked for every time: it names all the parts, including ones under groups the tree hasn't drawn.
+  const parts = (await api(`/api/parts?ship=${encodeURIComponent(ship)}&seed=${encodeURIComponent(seed)}`)).parts;
+  if (!card.classList.contains('sel')) return;  // another card was picked meanwhile
+  const mine = new Set(want || []), got = [...mine].filter(id => parts.some(p => p.id === id)).length;
+  let list = card.querySelector('.resparts');
+  if (!list) { list = document.createElement('div'); list.className = 'resparts'; card.append(list); }
+  list.innerHTML = `<div class="muted" style="margin:8px 0 4px">${mine.size ? `Has ${got} of your ${mine.size} parts` : 'Matched on colour only'}; the rest are random</div>`
+    + parts.map(p => `<div class="${mine.has(p.id) ? 'mine' : 'muted'}" title="${esc(p.id)}">${mine.has(p.id) ? '✓' : '·'} ${esc(p.name || p.id)}</div>`).join('');
+  list.hidden = false;
+}
 $('#dGo').onclick = () => guard(async () => {
   const want = wanted(); if (!want.length && !lookSet()) throw new Error('Pick at least one part or colour first.');
   const r = await post('/api/design/search', {ship: $('#dShip').value, want, n: +$('#dN').value, seconds: searchSeconds(), look: S.look});
-  S.job = {id: r.job, ship: $('#dShip').value, want: +$('#dN').value, oneIn: oddsOneIn()}; $('#dResults').innerHTML = '';
+  S.job = {id: r.job, ship: $('#dShip').value, want: +$('#dN').value, oneIn: oddsOneIn(), parts: want}; $('#dResults').innerHTML = '';
   $('#dGo').disabled = $('#dFind').disabled = true; $('#dStop').disabled = false; pollJob();
 });
 $('#dStop').onclick = () => S.job && post(`/api/jobs/${S.job.id}/cancel`, {});
@@ -313,8 +344,10 @@ async function pollJob() {
   for (let i = box.children.length; i < j.results.length; i++) {
     const res = j.results[i], d = document.createElement('div'); d.className = 'card res';
     d.innerHTML = `${lookBadge(res.look)}
-      <div class="row" style="margin-top:6px;justify-content:space-between"><code>${res.seed}</code><button class="btn">Put in my save...</button></div>`;
-    d.querySelector('button').onclick = () => applySeed(res.seed, job.ship); box.append(d);
+      <div class="row" style="margin-top:6px;justify-content:space-between"><code>${res.seed}</code>
+        <span class="row" style="gap:6px">${previewBtn}<button class="btn" data-act="put">Put in my save...</button></span></div>`;
+    d.querySelector('[data-act="preview"]').onclick = () => guard(() => previewSeed(d, res.seed, job.ship, job.parts));
+    d.querySelector('[data-act="put"]').onclick = () => applySeed(res.seed, job.ship); box.append(d);
   }
   if (j.status === 'running') setTimeout(() => guard(pollJob), 800);
   else { $('#dGo').disabled = $('#dFind').disabled = false; $('#dStop').disabled = true; }
