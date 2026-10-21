@@ -109,13 +109,12 @@ async function installDesign() {
   const label = target === 'new' ? 'a new ship slot' : $('#dTarget').selectedOptions[0].textContent.replace(/^Replace /, '');
   const saved = (S.designs || []).find(x => x.id === $('#dSaved').value && x.ship === ship);
   const seeds = [...new Set([...$$('#dResults code')].map(c => c.textContent).concat(saved ? saved.seeds : []))];
-  if (!confirm(`Put this ${ship} design (${want.length} parts) into ${label}?\n\nA backup of your save is made first. `
-      + (seeds.length ? 'A known seed is used if it still matches.' : 'No known seed yet, so it searches for one first.'))) return;
+  if (target !== 'new' && !await ask(`Put this ${ship} design (${want.length} parts) into ${label}? The ship there becomes this design.`, 'Put it in')) return;
   const name = saved ? saved.name : 'Custom design';
   const r = await post('/api/designs/install', {path: S.path, slot: target, seconds: searchSeconds(),
                                                 design: {name, ship, want, found_seeds: seeds}});
   S.installJob = r.job; $('#dInstall').disabled = true; $('#dInstallStop').hidden = false;
-  const phases = {checking: 'Checking known seeds...', searching: 'Searching for a matching seed...', writing: 'Writing to your save...'};
+  const phases = {checking: 'Checking known seeds...', searching: 'Searching for a matching seed...', writing: 'Putting it in...'};
   while (true) {
     await new Promise(res => setTimeout(res, 700));
     const j = await api('/api/jobs/' + S.installJob);
@@ -126,7 +125,8 @@ async function installDesign() {
     $('#dInstall').disabled = false; $('#dInstallStop').hidden = true;
     if (j.status === 'error') throw new Error(j.error);
     if (j.status === 'cancelled') { toast('Stopped. Nothing was changed.'); return; }
-    showBanner(`Saved: ${j.result.what} is now this ${ship} design (${j.result.seed}) in ${j.result.file}. Backup made. Load this save in the game to see it.`, false);
+    await refreshDraft();
+    showBanner(`${j.result.what} is now this ${ship} design (${j.result.seed}) in your unsaved edits. Press Review & save, then load the save in the game.`, false);
     $('#dInstallStatus').textContent = `Last put in: ${j.result.what} (${j.result.seed})`;
     await loadShips(); fillTargets();
     return;
@@ -178,7 +178,7 @@ async function initDesigner() {
   await loadDesigns();
   $('#dSaved').onchange = designNote;
   fillTargets();
-  $('#dInstall').onclick = () => guard(installDesign).finally(() => { $('#dInstall').disabled = false; $('#dInstallStop').hidden = true; });
+  $('#dInstall').onclick = () => guard(installDesign).finally(() => { S.installJob = null; $('#dInstall').disabled = false; $('#dInstallStop').hidden = true; });
   $('#dInstallStop').onclick = () => guard(async () => { if (S.installJob) await post(`/api/jobs/${S.installJob}/cancel`, {}); });
   $('#dExport').onclick = () => guard(async () => {
     const d = (S.designs || []).find(x => x.id === $('#dSaved').value);
@@ -187,7 +187,7 @@ async function initDesigner() {
       file = await api(`/api/designs/${encodeURIComponent(d.id)}/file`);
     } else {  // the current, unsaved selection
       const want = wanted(); if (!want.length) throw new Error('Pick some parts or load a design first.');
-      const name = prompt('Name for this design file:', 'My design'); if (!name) return;
+      const name = await askValue('Name for this design file:', {value: 'My design', yes: 'Save file'}); if (!name) return;
       const seeds = [...$$('#dResults code')].map(c => c.textContent).slice(0, 12);
       file = {filename: name.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '.nmsdesign.json',
               text: JSON.stringify({name, ship: $('#dShip').value, want, avoid: [], found_seeds: seeds, made_with: 'NMS Shipwright'}, null, 1)};
@@ -203,14 +203,14 @@ async function initDesigner() {
   $('#dLoad').onclick = () => guard(loadDesign);
   $('#dSave').onclick = () => guard(async () => {
     const want = wanted(); if (!want.length) throw new Error('Pick some parts first.');
-    const name = prompt('Name for this design:'); if (!name) return;
+    const name = await askValue('Name for this design:', {yes: 'Save design'}); if (!name) return;
     const seeds = [...$$('#dResults code')].map(c => c.textContent).slice(0, 12);
     const r = await post('/api/designs', {name, ship: $('#dShip').value, want, seeds});
     S.designs = r.designs; await loadDesigns(r.id); toast(`Saved "${name}".`);
   });
   $('#dDelete').onclick = () => guard(async () => {
     const d = (S.designs || []).find(x => x.id === $('#dSaved').value);
-    if (!d || !d.mine || !confirm(`Delete the saved design "${d.name}"?`)) return;
+    if (!d || !d.mine || !await ask(`Delete the saved design "${d.name}"?`, 'Delete', true)) return;
     const r = await api('/api/designs/' + encodeURIComponent(d.id), {method: 'DELETE'});
     S.designs = r.designs; await loadDesigns(); toast('Deleted.');
   });

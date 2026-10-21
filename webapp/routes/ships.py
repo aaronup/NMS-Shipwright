@@ -7,9 +7,9 @@ import warnings
 from flask import Blueprint, jsonify, request
 
 from nms_procgen import locate
-from nms_save import items, locator, player, ships
+from nms_save import items, locator, player, save, ships
 
-from webapp.common import (PALETTES, SHIP_LABELS, SHIP_MODELS, SPECIAL_SHIPS, body, game_running, model_filename,
+from webapp.common import (PALETTES, SHIP_LABELS, SHIP_MODELS, SPECIAL_SHIPS, body, game_running_cached, model_filename,
                            open_save, ship_alias, write)
 
 bp = Blueprint("ships", __name__)
@@ -17,7 +17,7 @@ bp = Blueprint("ships", __name__)
 
 @bp.route("/api/status")
 def api_status():
-    return jsonify({"game_running": game_running()})
+    return jsonify({"game_running": game_running_cached()})
 
 
 SAVE_INFO = {}  # (path, mtime) -> summary shown in the save picker
@@ -27,7 +27,7 @@ def save_info(s):
     key = (s.path, s.mtime)
     if key not in SAVE_INFO:
         try:
-            r = open_save(s.path).readable
+            r = save.open_save(s.path).readable  # the file itself: listing saves must not open drafts of them
             ps, common = r["BaseContext"]["PlayerStateData"], r.get("CommonStateData", {})
             SAVE_INFO[key] = {"name": common.get("SaveName") or "", "summary": ps.get("SaveSummary") or "",
                               "playtime": common.get("TotalPlayTime") or ps.get("TotalPlayTime") or 0,

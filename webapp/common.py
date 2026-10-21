@@ -6,9 +6,12 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
-from flask import request
+from flask import g, has_request_context, request
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,25 +89,125 @@ class GameRunning(RuntimeError):
     pass
 
 
+def _running_under_proton():
+    """Linux/Steam Deck: the game runs under Proton as a process named NMS.exe."""
+    for pid in os.listdir("/proc"):
+        if pid.isdigit():
+            try:
+                with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
+                    if f.read().strip().lower() == "nms.exe":
+                        return True
+            except OSError:
+                continue
+    return False
+
+
 def game_running():
+    """True / False, or None when it can't be told (then saving is refused, to be safe)."""
+    if sys.platform != "win32":
+        return _running_under_proton() if os.path.isdir("/proc") else None
     try:
-        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq NMS.exe"], capture_output=True, text=True,
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq NMS.exe"], capture_output=True, text=True, timeout=5,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-    except OSError:
-        return False
+    except (OSError, subprocess.SubprocessError):
+        return None
     return "NMS.exe" in out
 
 
+def file_stamp(path):
+    st = os.stat(path)
+    return st.st_mtime_ns, st.st_size
+
+
 def open_save(path):
-    if not path or not os.path.exists(path):
-        raise ValueError("Missing or invalid save path")
-    return save.open_save(path)
+    """The save as the player is editing it (its draft); see webapp/drafts.py."""
+    from webapp import drafts
+    return drafts.open_save(path)
 
 
 def write(opened):
-    if game_running():
-        raise GameRunning("No Man's Sky is running -- quit the game first, or it will overwrite this change.")
-    return opened.write()
+    """Put an edit into the save's draft. Nothing reaches the file until the player saves; returns None."""
+    from webapp import drafts
+    return drafts.write(opened)
+
+
+GAME_RUNNING_MSG = "No Man's Sky is running -- quit the game first, or it will overwrite this change."
+GAME_UNKNOWN_MSG = ("Could not check whether No Man's Sky is running, so nothing was written. "
+                    "Make sure the game is closed and try again.")
+
+_RUNNING = {"at": 0.0, "value": False}
+
+
+def ensure_game_closed(msg=GAME_RUNNING_MSG):
+    """Raise GameRunning unless the game is known to be closed."""
+    running = game_running()
+    if running is None:
+        raise GameRunning(GAME_UNKNOWN_MSG)
+    if running:
+        raise GameRunning(msg)
+
+
+def game_running_cached(max_age=4.0):
+    """game_running() for status polls: shared and refreshed at most every few seconds. Unknown counts as running."""
+    now = time.time()
+    if now - _RUNNING["at"] > max_age:
+        _RUNNING["value"], _RUNNING["at"] = game_running() is not False, now
+    return _RUNNING["value"]
+
+
+# Backup restores replace the whole file, so they are staged and confirmed on their own, by token.
+PENDING: dict[str, dict] = {}
+PENDING_KEEP, PENDING_SECONDS = 2, 600
+PENDING_LOCK = threading.Lock()
+
+
+def stage(path, after, commit):
+    """Hold a change until the player confirms it. `commit(stamp)` does the write (refusing if the file
+    is no longer the one summarised) and returns extra response fields. Returns {token, file, changes,
+    total}, the summary the page shows."""
+    from webapp import summary
+    stamp = file_stamp(path)
+    changes, total = summary.describe(save.open_save(path).readable, after)
+    now = time.time()
+    token = uuid.uuid4().hex
+    with PENDING_LOCK:
+        for t in [t for t, p in PENDING.items() if now - p["made"] > PENDING_SECONDS]:
+            del PENDING[t]
+        while len(PENDING) >= PENDING_KEEP:
+            del PENDING[next(iter(PENDING))]
+        PENDING[token] = {"path": path, "stamp": stamp, "commit": commit, "response": None, "made": now}
+    info = {"token": token, "file": os.path.basename(path), "changes": changes, "total": total}
+    if has_request_context():
+        g.save_preview = info
+    return info
+
+
+def commit(token):
+    """Do a staged change exactly as it was shown. A refusal the player can fix (game running, unsaved
+    edits) keeps the token, so they can fix it and confirm again."""
+    from webapp import drafts
+    with PENDING_LOCK:
+        p = PENDING.pop(token, None)
+    if not p:
+        raise ValueError("Nothing was written: this summary expired. Do it again to see a fresh one.")
+    try:
+        return {**(p["response"] or {"ok": True}), **p["commit"](p["stamp"])}
+    except (GameRunning, drafts.UnsavedEdits, drafts.SaveLocked):
+        with PENDING_LOCK:
+            PENDING[token] = p
+        raise
+
+
+def attach_preview(resp):
+    """after_request: keep the route's normal answer for commit() and add the summary to it."""
+    info = g.pop("save_preview", None) if has_request_context() else None
+    if info and resp.status_code == 200 and resp.is_json:
+        data = {k: v for k, v in (resp.get_json() or {}).items() if k != "preview"}
+        with PENDING_LOCK:
+            if info["token"] in PENDING:
+                PENDING[info["token"]]["response"] = data
+        resp.set_data(json.dumps({**data, "preview": info}))
+    return resp
 
 
 def body():

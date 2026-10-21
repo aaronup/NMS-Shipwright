@@ -15,7 +15,8 @@ from nms_procgen import model3d, ROOTS, explain, load_descriptor, ref_to_descrip
 from nms_procgen.fastsearch import fast_search
 from nms_save import gamefiles, player, ships
 
-from webapp.common import (GameRunning, JOBS, NO_SEED_LOOK, ROOT, SHIP_LABELS, body, game_running,
+from webapp import drafts
+from webapp.common import (JOBS, NO_SEED_LOOK, ROOT, SHIP_LABELS, body,
                            limit_seconds, model_filename, open_save, parse_look, part_label, part_names,
                            ship_alias, write)
 
@@ -231,34 +232,30 @@ def matching_seed(ship, want, seeds):
 
 
 def put_design(path, ship, want, seed, slot, name):
-    """Write one design's seed into a ship slot ("new" = the first empty slot)."""
-    opened = open_save(path)
-    r = opened.readable
-    owned = r["BaseContext"]["PlayerStateData"]["ShipOwnership"]
-    filename = model_filename(ship)
-    if slot == "new":
-        empty = [i for i, e in enumerate(owned) if not e.get("Resource", {}).get("Filename")]
-        if not empty:
-            raise ValueError("no empty ship slot in this save -- pick one of your ships to replace instead")
-        slot = empty[0]
-        ships.create_ship(r, slot, filename, seed, name[:64], player.primary_ship(r))
-        what = f"new ship in slot {slot}"
-    else:
-        slot = int(slot)
-        if not owned[slot].get("Resource", {}).get("Filename"):
-            raise ValueError(f"slot {slot} is empty")
-        current = ship_alias(owned[slot]["Resource"]["Filename"])
-        if current == ship:
-            ships.set_ship_seed(r, slot, seed)
+    """Put one design's seed into a ship slot ("new" = the first empty slot) of the save being edited."""
+    with drafts.editing(path):  # the install job edits from its own thread, outside any request
+        opened = open_save(path)
+        r = opened.readable
+        owned = r["BaseContext"]["PlayerStateData"]["ShipOwnership"]
+        filename = model_filename(ship)
+        if slot == "new":
+            empty = [i for i, e in enumerate(owned) if not e.get("Resource", {}).get("Filename")]
+            if not empty:
+                raise ValueError("no empty ship slot in this save -- pick one of your ships to replace instead")
+            slot = empty[0]
+            ships.create_ship(r, slot, filename, seed, name[:64], player.primary_ship(r))
+            what = f"new ship in slot {slot}"
         else:
-            ships.set_ship_model(r, slot, filename, seed)
-        what = f"slot {slot}"
-    backup = write(opened)
-    # Read the file back: the change must really be in the save the game will load.
-    check = next((x for x in ships.list_ships(open_save(path).readable) if x.index == slot), None)
-    if not check or ship_alias(check.filename) != ship or int(str(check.seed), 16) != int(seed, 16):
-        raise RuntimeError(f"the save was written but slot {slot} does not read back as this ship -- "
-                           f"restore the backup {os.path.basename(backup or '')} and report this")
+            slot = int(slot)
+            if not owned[slot].get("Resource", {}).get("Filename"):
+                raise ValueError(f"slot {slot} is empty")
+            current = ship_alias(owned[slot]["Resource"]["Filename"])
+            if current == ship:
+                ships.set_ship_seed(r, slot, seed)
+            else:
+                ships.set_ship_model(r, slot, filename, seed)
+            what = f"slot {slot}"
+        backup = write(opened)
     return {"slot": slot, "seed": seed, "what": what, "backup": backup, "file": os.path.basename(path)}
 
 
@@ -292,8 +289,6 @@ def api_ship_put():
     ship = b.get("ship")
     if ship not in ROOTS:
         raise ValueError(f"unknown ship type {ship!r}")
-    if game_running():
-        raise GameRunning("No Man's Sky is running -- quit the game first, or it will overwrite this change.")
     seed = f"0x{int(str(b['seed']), 16) & (1 << 64) - 1:016X}"
     return jsonify({"ok": True, **put_design(b.get("path"), ship, None, seed, b.get("slot", "new"),
                                               b.get("name") or SHIP_LABELS.get(ship, ship))})
@@ -303,12 +298,10 @@ def api_ship_put():
 def api_design_install():
     """Put a design into the save: a saved seed if one still matches, otherwise a quick search first."""
     b = body()
-    if game_running():
-        raise GameRunning("No Man's Sky is running -- quit the game first, or it will overwrite this change.")
     design = find_design(b["id"]) if b.get("id") else dict(clean_design(b.get("design") or {}))
     if "seeds" not in design:
         design["seeds"] = design.get("found_seeds", [])
-    open_save(b.get("path"))  # fail early on a bad path
+    drafts.check_path(b.get("path"))  # fail early on a bad path
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = job = {"status": "running", "phase": "checking", "results": [], "stats": {}, "cancel": False,
                           "error": None, "kind": "install", "result": None, "ship": design["ship"]}

@@ -7,5 +7,5 @@ async function loadPlayer() {
 }
 $('#pSave').onclick = () => guard(async () => {
   const body = {path: S.path}; for (const k of ['units', 'nanites', 'quicksilver']) body[k] = Number($('#p_' + k).value);
-  await post('/api/player', body); toast('Currencies saved. Backup made.');
+  await edit('/api/player', body); toast('Currencies changed. ' + UNSAVED);
 });

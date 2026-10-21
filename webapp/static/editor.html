@@ -110,17 +110,17 @@
     <h3>Export / import</h3>
     <div class="card" style="padding:14px;max-width:760px">
       <p class="muted" style="margin-top:0">Download the whole save as readable JSON (to keep, share or edit), or load a JSON file back into this save slot.</p>
-      <div class="row"><a class="btn" id="xExport" download>Download as JSON</a>
+      <div class="row"><a class="btn" id="xExport" download title="What you see in Shipwright, unsaved edits included">Download as JSON (with unsaved edits)</a>
         <label class="btn">Import JSON...<input type="file" id="xImport" accept=".json,application/json" hidden></label></div>
     </div>
     <details class="fold" id="rawBox"><summary>Advanced: edit any value in the save</summary>
-      <p class="muted" style="margin-top:0">Browse the save like NomNom's JSON view. Values are checked to keep their type. A backup is made on every change.</p>
+      <p class="muted" style="margin-top:0">Browse the save like NomNom's JSON view. Values are checked to keep their type. Changes are unsaved edits until you press Review &amp; save, which backs the save up first.</p>
       <div class="row"><span class="mono" id="rPath"></span></div>
       <div class="card rawlist" id="rList"></div>
       <div class="row" id="rEdit" style="margin-top:8px"></div>
     </details>
     <h3>Backups</h3>
-    <p class="muted" style="margin-top:0">Every change backs your save up first. Restoring also backs up the current file.</p>
+    <p class="muted" style="margin-top:0">Every Review &amp; save backs your save up first. Restoring also backs up the current file.</p>
     <table><thead><tr><th>Backup</th><th>Made</th><th>Size</th><th></th></tr></thead><tbody id="bRows"></tbody></table>
   </section>
 
@@ -163,7 +163,7 @@
   <section class="page" id="page-quests">
     <h2>Quests</h2>
     <p class="muted" style="max-width:900px">Skipping marks a quest as finished in your save, using the same value the game writes when you finish it
-      yourself. You won't get the rewards, items or unlocks from the steps you skip. Close the game first. A backup is made every time.</p>
+      yourself. You won't get the rewards, items or unlocks from the steps you skip. Skipped steps are unsaved edits until you press Review &amp; save (quit the game first; the save is backed up when you do).</p>
     <div class="row">
       <input id="qFilter" placeholder="Search quests..." style="min-width:240px">
       <select id="qShow"><option value="in_progress">In progress</option><option value="not_started">Not started</option>
@@ -177,6 +177,8 @@
 </main>
 </div>
 <div id="toast"></div>
+<div id="saveBar" class="savebar" hidden><span id="sbText"></span><button class="btn primary" id="sbReview">Review &amp; save</button><button class="btn" id="sbDiscard">Discard</button></div>
+<dialog id="saveDlg" class="savedlg"></dialog>
 
 <script src="/static/viewer.js"></script>
 <script src="/static/js/core.js"></script>

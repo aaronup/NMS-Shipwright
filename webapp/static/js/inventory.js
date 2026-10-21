@@ -41,7 +41,7 @@ function drawGrid() {
   $$('#iGrid .cell').forEach(c => c.onclick = () => { INV.sel = c.dataset.k; drawGrid(); slotEditor(at[c.dataset.k]); });
 }
 async function invEdit(op, extra = {}) {
-  const r = await post('/api/inventory', {path: S.path, inv: INV.cur, op, ...extra});
+  const r = await edit('/api/inventory', {path: S.path, inv: INV.cur, op, ...extra});
   const keep = INV.sel; await openInventory(INV.cur, r); INV.sel = keep; drawGrid();
   const li = INV.list.find(i => i.path === INV.cur); if (li) { li.used = r.slots.length; li.slots = r.valid.length; }
   return r;
@@ -63,15 +63,15 @@ function slotEditor(s) {
       <select id="sType"><option value="">All</option><option>Substance</option><option>Product</option><option>Technology</option></select></div>
     <div class="results" id="sRes" style="margin-top:8px"></div>`;
   if (s) {
-    $('#sAmtGo').onclick = () => guard(async () => { await invEdit('amount', {x, y, amount: +$('#sAmt').value}); toast('Amount set. Backup made.'); slotEditor(INV.data.slots.find(q => q.x === x && q.y === y)); });
+    $('#sAmtGo').onclick = () => guard(async () => { await invEdit('amount', {x, y, amount: +$('#sAmt').value}); toast('Amount set. ' + UNSAVED); slotEditor(INV.data.slots.find(q => q.x === x && q.y === y)); });
     $('#sMax').onclick = () => { $('#sAmt').value = s.max; $('#sAmtGo').click(); };
-    $('#sDel').onclick = () => guard(async () => { await invEdit('remove', {x, y}); toast('Slot emptied. Backup made.'); slotEditor(null); });
+    $('#sDel').onclick = () => guard(async () => { await invEdit('remove', {x, y}); toast('Slot emptied. ' + UNSAVED); slotEditor(null); });
   }
   if ($('#sUnlock')) $('#sUnlock').onclick = () => guard(async () => {
-    await invEdit('unlock', {x, y}); toast('Slot added. Backup made.'); slotEditor(null);
+    await invEdit('unlock', {x, y}); toast('Slot added. ' + UNSAVED); slotEditor(null);
   });
   if ($('#sLock')) $('#sLock').onclick = () => guard(async () => {
-    await invEdit('lock', {x, y}); toast('Slot removed. Backup made.'); slotEditor(null);
+    await invEdit('lock', {x, y}); toast('Slot removed. ' + UNSAVED); slotEditor(null);
   });
   let t = null;
   const find = () => { clearTimeout(t); t = setTimeout(() => guard(async () => {
@@ -79,7 +79,7 @@ function slotEditor(s) {
     const rows = await api(`/api/items?q=${encodeURIComponent(q)}&type=${encodeURIComponent($('#sType').value)}`);
     $('#sRes').innerHTML = rows.map(r => `<button class="btn chip" data-id="${esc(r.id)}" title="${esc(r.id)}">${esc(r.name)} <span class="muted">${esc(r.type)}</span></button>`).join(' ') || '<span class="muted">Nothing found.</span>';
     $$('#sRes button').forEach(b => b.onclick = () => guard(async () => {
-      await invEdit('set', {x, y, id: b.dataset.id}); toast(`${b.textContent.trim()} added. Backup made.`);
+      await invEdit('set', {x, y, id: b.dataset.id}); toast(`${b.textContent.trim()} added. ${UNSAVED}`);
       slotEditor(INV.data.slots.find(q => q.x === x && q.y === y));
     }));
   }), 200); };
@@ -89,11 +89,11 @@ $('#iSetSlots').onclick = () => guard(async () => {
   const n = +$('#iSlots').value;
   const now = INV.data.valid.length;
   if (n === now) return;
-  if (n < now && !confirm(`Take ${now - n} slot(s) away from this inventory? Anything in them must be moved out first.`)) return;
+  if (n < now && !await ask(`Take ${now - n} slot(s) away from this inventory? Anything in them must be moved out first.`, 'Take away', true)) return;
   await invEdit('slots', {count: n});
-  toast(`This inventory now has ${INV.data.valid.length} slots. Backup made.`);
+  toast(`This inventory now has ${INV.data.valid.length} slots. ${UNSAVED}`);
 });
 $$('#page-inventory [data-op]').forEach(b => b.onclick = () => guard(async () => {
   if (!INV.cur) return;
-  await invEdit(b.dataset.op); toast(`${b.textContent} done. Backup made.`);
+  await invEdit(b.dataset.op); toast(`${b.textContent} done. ${UNSAVED}`);
 }));

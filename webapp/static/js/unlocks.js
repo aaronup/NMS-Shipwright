@@ -11,13 +11,12 @@ async function loadUnlocks() {
     <div class="row" style="margin-top:10px"><button class="btn primary" data-words="*">Learn every alien word</button>
       <button class="btn primary" id="uEverything">Unlock everything</button></div>`;
   $('#uEverything').onclick = () => guard(async () => {
-    if (!confirm('Learn every word, blueprint, recipe, base part and customisation part in this save?')) return;
-    let n = 0;
-    await post('/api/extras', {path: S.path, action: 'words'});
-    for (const g of d.knowledge.groups) n += (await post('/api/extras', {path: S.path, action: g.group})).result || 0;
-    toast(`Unlocked ${n} blueprints and recipes, plus every word. Backup made.`); await loadUnlocks();
+    if (!await ask('Learn every word, blueprint, recipe, base part and customisation part in this save?', 'Learn everything')) return;
+    const r = await edit('/api/extras', {path: S.path, action: 'everything'});
+    const n = r.result || 0;
+    toast(`Unlocked ${n} blueprints and recipes, plus every word. ${UNSAVED}`); await loadUnlocks();
   });
-  const act = (body, msg) => guard(async () => { await post('/api/extras', {path: S.path, ...body}); toast(msg + ' Backup made.'); await loadUnlocks(); });
+  const act = (body, msg) => guard(async () => { await edit('/api/extras', {path: S.path, ...body}); toast(msg + ' ' + UNSAVED); await loadUnlocks(); });
   $$('#uKnow [data-words]').forEach(b => b.onclick = () => act({action: 'words', races: b.dataset.words === '*' ? null : [b.dataset.words]}, 'Words learned.'));
   $$('#uKnow [data-learn]').forEach(b => b.onclick = () => act({action: b.dataset.learn}, 'Learned.'));
   await loadRewards();
@@ -53,8 +52,8 @@ async function loadRewards() {
       <span class="muted">${g.unlocked}/${g.total}</span></button>`).join('')
     + `<span style="flex:1"></span><button class="btn" id="wAll">Unlock all in this group</button><button class="btn" id="wAgain">Make all claimable again</button>`;
   $$('#wGroups [data-g]').forEach(b => b.onclick = () => { REW.group = b.dataset.g; guard(loadRewards); });
-  const act = body => guard(async () => { const r = await post('/api/rewards', {path: S.path, group: REW.group, ...body});
-    toast(`${r.changed} rewards updated. Backup made.`); await loadRewards(); });
+  const act = body => guard(async () => { const r = await edit('/api/rewards', {path: S.path, group: REW.group, ...body});
+    toast(`${r.changed} rewards updated. ${UNSAVED}`); await loadRewards(); });
   $('#wAll').onclick = () => act({unlock: true});
   $('#wAgain').onclick = () => act({redeemed: false});
   $('#wCount').textContent = `showing ${d.items.length} of ${d.shown}`;
