@@ -20,8 +20,8 @@ function setupExport() {
   }); };
   $('#xImport').onchange = e => guard(async () => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-    if (!confirm(`Replace this save with ${f.name}? A backup of the current save is made first.`)) return;
-    await post('/api/save/import', {path: S.path, json: await f.text()}); toast('Save imported. Backup made.'); await loadShips();
+    if (!await ask(`Replace everything in this save with ${f.name}?`, 'Replace', true)) return;
+    await edit('/api/save/import', {path: S.path, json: await f.text()}); toast('Save imported. ' + UNSAVED); await reloadAll();
   });
 }
 async function rawOpen(at) {
@@ -31,7 +31,7 @@ async function rawOpen(at) {
   $$('#rPath a').forEach(a => a.onclick = e => { e.preventDefault(); guard(() => rawOpen(a.dataset.at)); });
   if (d.leaf) {
     $('#rEdit').innerHTML = `<input id="rVal" class="mono" value="${esc(d.value)}" style="min-width:360px"><button class="btn primary" id="rSave">Save value</button>`;
-    $('#rSave').onclick = () => guard(async () => { await post('/api/raw', {path: S.path, at, value: $('#rVal').value}); toast('Value saved. Backup made.'); });
+    $('#rSave').onclick = () => guard(async () => { await edit('/api/raw', {path: S.path, at, value: $('#rVal').value}); toast('Value changed. ' + UNSAVED); });
     return;
   }
   $('#rEdit').innerHTML = d.more ? `<span class="muted">${d.more} more not shown</span>` : '';
@@ -87,12 +87,12 @@ function renderQuests() {
 }
 async function skipQuests(rows, label) {
   const n = rows.length;
-  if (!confirm(`Skip ${label}?
+  if (!await ask(`Skip ${label}?
 
 ${n} quest step${n === 1 ? '' : 's'} will be marked finished in your save. ` +
-      "You won't get the rewards or unlocks from the skipped steps. A backup is made first.")) return;
-  const r = await post('/api/quests/skip', {path: S.path, keys: rows.map(x => x.key)});
-  toast(r.changed.length ? `Skipped ${r.changed.length} quest step${r.changed.length === 1 ? '' : 's'}. Backup made.` : 'Those steps were already finished.');
+      "You won't get the rewards or unlocks from the skipped steps.", 'Skip')) return;
+  const r = await edit('/api/quests/skip', {path: S.path, keys: rows.map(x => x.key)});
+  toast(r.changed.length ? `Skipped ${r.changed.length} quest step${r.changed.length === 1 ? '' : 's'}. ${UNSAVED}` : 'Those steps were already finished.');
   await loadQuests();
 }
 $('#qFilter').oninput = renderQuests;
@@ -106,16 +106,16 @@ async function loadBackups() {
     <td>${(b.size / 1024).toFixed(0)} KB</td><td><button class="btn" data-i="${i}">Restore</button></td></tr>`).join('')
     : '<tr><td colspan="4" class="muted">No backups for this save yet.</td></tr>';
   $$('#bRows button').forEach(btn => btn.onclick = () => guard(async () => {
-    if (!confirm('Restore this backup over the current save? The current file is backed up first.')) return;
-    await post('/api/backups/restore', {path: S.path, file: list[+btn.dataset.i].file});
-    toast('Backup restored.'); await loadShips(); await loadBackups();
+    if (S.draft.dirty) throw new Error('Review & save or discard your unsaved edits before restoring a backup.');
+    if (!await restoreBackup(list[+btn.dataset.i].file)) return;
+    toast('Backup restored.'); await refreshDraft(); await reloadAll();
   }));
 }
 
 (async () => {
   await guard(async () => {
     await loadStatus(); S.palettes = await api('/api/palettes');
-    await loadSaves(); await loadShips(); await initDesigner();
+    await loadSaves(true); await refreshDraft(); await loadShips(); await initDesigner();
   });
   loadHealth(false).catch(() => {});  // warns in the banner if a game update broke something
   setInterval(() => loadStatus().catch(() => {}), 5000);

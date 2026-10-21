@@ -28,9 +28,11 @@ function freighterCard(x, home) {
       <button class="btn" data-seed="${esc(x.seed)}" data-ship="${esc(x.alias)}" data-home="${esc(home)}">Apply to your freighter</button></div></div>`;
 }
 async function applyFreighter(seed, ship, home) {
-  if (!confirm(`Give your freighter this ${ship === 'capital_freighter' ? 'capital freighter' : 'freighter'} look (seed ${seed})?\n` +
-    `Its home system is set to where it was found, which sets its colours. Your freighter base and cargo stay. A backup is made first.`)) return;
-  await guard(async () => { await post('/api/freighter', {path: S.path, seed, ship, home}); toast('Freighter updated. Backup made.'); });
+  await guard(async () => {
+    if (!await ask(`Give your freighter this ${ship === 'capital_freighter' ? 'capital freighter' : 'freighter'} look (seed ${seed})?\n` +
+      'Its home system is set to where it was found, which sets its colours. Your freighter base and cargo stay.', 'Change freighter')) return;
+    await edit('/api/freighter', {path: S.path, seed, ship, home}); toast('Freighter updated. ' + UNSAVED);
+  });
 }
 async function showSystem() {
   const box = $('#fSystem'); box.innerHTML = '<p class="muted">Generating the system...</p>';

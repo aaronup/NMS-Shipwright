@@ -45,6 +45,9 @@ def api_extras():
     opened, act, r = open_save(b.get("path")), b.get("action"), None
     if act == "words":
         r = extras.learn_words(opened.readable, b.get("races"))
+    elif act == "everything":
+        extras.learn_words(opened.readable)
+        r = sum(extras.learn_all(opened.readable, g) for g in extras.UNLOCKS)
     elif act in extras.UNLOCKS:
         r = extras.learn_all(opened.readable, act)
     elif act == "multitool":

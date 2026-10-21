@@ -41,12 +41,13 @@ class OpenSave:
     def backup_path(self) -> str:
         return backup_path_for(self.path)
 
-    def write(self, *, backup: bool = True) -> str | None:
+    def write(self, *, backup: bool = True, return_text: bool = False):
         """Write self.readable back to self.path.
 
         Returns the backup file path (or None if backup=False). Always
         backs up by default -- pass backup=False only if you already made
-        one yourself.
+        one yourself. With return_text, returns (backup path, the JSON text
+        written) so a caller can check the file reads back as exactly that.
         """
         backup_path = None
         if backup:
@@ -57,16 +58,41 @@ class OpenSave:
         text = json.dumps(obfuscated, separators=(",", ":"))
         raw = codec.encode(text, self._chunked, self._trailing_nul)
 
-        with open(self.path, "wb") as f:
-            f.write(raw)
+        write_atomic(self.path, raw)
 
-        return backup_path
+        return (backup_path, text) if return_text else backup_path
+
+
+def tmp_path_for(path: str) -> str:
+    """The temp file write_atomic() writes beside `path` before swapping it in."""
+    return path + ".tmp"
+
+
+def write_atomic(path: str, raw: bytes) -> None:
+    """Replace `path` with `raw` in one step: write a temp file beside it, then swap it in.
+
+    A failure halfway (full disk, a file lock) leaves the old file whole instead of a truncated save.
+    """
+    tmp = tmp_path_for(path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def open_save(path: str) -> OpenSave:
     with open(path, "rb") as f:
         raw = f.read()
+    return from_bytes(path, raw)
 
+
+def from_bytes(path: str, raw: bytes) -> OpenSave:
+    """Decode save bytes already read from `path` (so a caller can hash exactly what it decoded)."""
     text, chunked, trailing_nul = codec.decode(raw)
     data = json.loads(text)
     readable = mapping.deobfuscate(data)

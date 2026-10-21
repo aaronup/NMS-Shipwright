@@ -4,9 +4,9 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from nms_procgen import model3d, textures
-from nms_save import extras, gamepath, gameversion, items, locator, quests
+from nms_save import extras, gamepath, gameversion, items, locator, quests, save
 
-from webapp.common import body, open_save
+from webapp.common import body
 
 bp = Blueprint("health", __name__)
 
@@ -24,7 +24,7 @@ def _save_format():
     saves = locator.find_saves()
     if not saves:
         return "no saves to check"
-    r = open_save(saves[0].path).readable
+    r = save.open_save(saves[0].path).readable  # the file itself: a health check must not open a draft
     ps = r["BaseContext"]["PlayerStateData"]
     need = ("ShipOwnership", "Inventory", "Multitools", "KnownProducts", "MissionProgress", "Units")
     missing = [k for k in need if k not in ps]

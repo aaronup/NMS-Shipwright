@@ -57,33 +57,39 @@ function selectShip(slot) {
       <button class="btn" id="sModelApply">Change type</button></div>
     <h3>Remove</h3>
     <div class="row"><button class="btn" id="sRemove">Remove this ship</button>
-      <span class="muted">Empties the slot. A backup is made first -- undo it from Save &gt; Backups.</span></div>
+      <span class="muted">Empties the slot. Undo it with Discard before you save, or from Save &gt; Backups after.</span></div>
     </details>
     ${s.is_procedural && s.ship ? '<h3>Colours &amp; finish from the seed</h3><div id="sLook"><span class="muted">Working out the look...</span></div>' : ''}
     <h3>Where to find it in the game</h3><div id="sOrigin">${originHtml(s)}</div>
     <details class="more"><summary>Parts list</summary><div class="parts mono" id="sParts">${s.is_procedural ? 'Loading...' : '<span>Fixed model</span>'}</div></details>`;
   $('#sApply').onclick = () => guard(async () => {
-    const r = await post('/api/ship/seed', {path: S.path, slot, seed: $('#sSeed').value.trim()});
-    toast(`Seed set to ${r.seed}. Backup made.`); if (r.warning) toast(r.warning, true); await loadShips();
+    const r = await edit('/api/ship/seed', {path: S.path, slot, seed: $('#sSeed').value.trim()});
+    toast(`Seed set to ${r.seed}. ${UNSAVED}`); if (r.warning) toast(r.warning, true); await loadShips();
   });
-  $('#sReroll').onclick = () => guard(async () => { const r = await post('/api/ship/reroll', {path: S.path, slot}); toast(`Rerolled to ${r.seed}`); await loadShips(); });
-  $('#sRename').onclick = () => guard(async () => { await post('/api/ship/name', {path: S.path, slot, name: $('#sName').value}); toast('Renamed. Backup made.'); await loadShips(); });
+  $('#sReroll').onclick = () => guard(async () => { const r = await edit('/api/ship/reroll', {path: S.path, slot}); toast(`Rerolled to ${r.seed}. ${UNSAVED}`); await loadShips(); });
+  $('#sRename').onclick = () => guard(async () => {
+    const name = $('#sName').value;
+    await edit('/api/ship/name', {path: S.path, slot, name});
+    const card = $(`.ship[data-slot="${slot}"] .meta b`);  // show it now; the full list reload follows
+    if (card) card.textContent = name || '(unnamed)';
+    toast('Renamed. ' + UNSAVED); await loadShips();
+  });
   if ($('#sRefit')) $('#sRefit').onclick = () => guard(async () => {
-    const r = await post('/api/ship/refit', {path: S.path, slot});
-    showBanner(`Slot ${slot} now has its own parts: ${r.swaps.map(x => `${x.from} -> ${x.to}`).join(', ')}. Backup made.`, false);
+    const r = await edit('/api/ship/refit', {path: S.path, slot});
+    showBanner(`Slot ${slot} now has its own parts: ${r.swaps.map(x => `${x.from} -> ${x.to}`).join(', ')}. ${UNSAVED}`, false);
     await loadShips();
   });
   $('#sModelApply').onclick = () => guard(async () => {
     const ship = $('#sModel').value; if (!ship) throw new Error('Pick a ship type first.');
     const m = S.models.find(x => x.ship === ship);
-    if (!confirm(`Change slot ${slot} into a ${m.label}? Its look will be generated from its seed.`)) return;
-    await post('/api/ship/model', {path: S.path, slot, ship, seed: s.is_procedural ? s.seed : randomSeed()});
-    toast(`Slot ${slot} is now a ${m.label}. Backup made.`); await loadShips();
+    if (!await ask(`Change slot ${slot} into a ${m.label}? Its look will be generated from its seed.`, 'Change type')) return;
+    await edit('/api/ship/model', {path: S.path, slot, ship, seed: s.is_procedural ? s.seed : randomSeed()});
+    toast(`Slot ${slot} is now a ${m.label}. ${UNSAVED}`); await loadShips();
   });
   $('#sRemove').onclick = () => guard(async () => {
-    if (!confirm(`Remove the ${s.category} in slot ${slot}?\n\nThe slot becomes empty. A backup is made first -- undo it from Save > Backups.`)) return;
-    const r = await post('/api/ship/remove', {path: S.path, slot});
-    toast(`Removed the ship in slot ${r.slot}. Backup made.`);
+    if (!await ask(`Remove the ${s.category} in slot ${slot}? The slot becomes empty.`, 'Remove', true)) return;
+    const r = await edit('/api/ship/remove', {path: S.path, slot});
+    toast(`Removed the ship in slot ${r.slot}. ${UNSAVED}`);
     S.slot = null; $('#shipDetail').innerHTML = '<p class="muted">Select a ship.</p>'; await loadShips();
   });
   if (s.ship) show3d('sView', modelUrl(s.ship, 'seed=' + encodeURIComponent(s.seed)));
@@ -187,14 +193,14 @@ function setupPaint(slot) {
   $('#pPri').onclick = () => { S.target = 'primary'; chips(); };
   $('#pAcc').onclick = () => { S.target = 'accent'; chips(); };
   $('#pApply').onclick = () => guard(async () => {
-    await post('/api/ship/paint', {path: S.path, slot, primary: S.paint.primary, accent: S.paint.accent, palette: pal.value,
+    await edit('/api/ship/paint', {path: S.path, slot, primary: S.paint.primary, accent: S.paint.accent, palette: pal.value,
                                    primary_index: S.paint.primary_index, accent_index: S.paint.accent_index});
     const cols = namedColours(S.palettes[pal.value] || []);
     showBanner(`Painted slot ${slot}: body ${nearestColour(cols, S.paint.primary).name}, trim ${nearestColour(cols, S.paint.accent).name}`
-               + ` (${PAINT_SETS[pal.value]}). Backup made. Load this save in the game to see it.`, false);
+               + ` (${PAINT_SETS[pal.value]}). ${UNSAVED}`, false);
     await loadShips();
   });
-  $('#pClear').onclick = () => guard(async () => { await post('/api/ship/paint/clear', {path: S.path, slot}); toast('Paint removed, back to its own colours. Backup made.'); await loadShips(); });
+  $('#pClear').onclick = () => guard(async () => { await edit('/api/ship/paint/clear', {path: S.path, slot}); toast('Paint removed, back to its own colours. ' + UNSAVED); await loadShips(); });
   swatches(); chips();
 }
 
@@ -218,46 +224,36 @@ async function loadStats(slot) {
   $('#sStatsSave').onclick = () => guard(async () => {
     const values = {};
     $$('#sStats [data-stat]').forEach(i => values[i.dataset.stat] = +i.value);
-    await post('/api/ship/stats', {path: S.path, slot, values, class: $('#sClass').value});
-    showBanner(`Stats saved for slot ${slot}. Backup made. Load this save in the game to see them.`, false);
+    await edit('/api/ship/stats', {path: S.path, slot, values, class: $('#sClass').value});
+    showBanner(`Stats changed for slot ${slot}. ${UNSAVED}`, false);
     await loadStats(slot); await loadShips();
   });
   $('#sStatsBest').onclick = () => guard(async () => {
     const cls = $('#sClass').value;
-    if (!confirm(`Give slot ${slot} the best stats a class ${cls} ship of this type can have?`)) return;
-    await post('/api/ship/stats', {path: S.path, slot, class: cls, best: true});
-    showBanner(`Slot ${slot} now has the best stats the game allows for a class ${cls} ship of its type. Backup made.`, false);
+    await edit('/api/ship/stats', {path: S.path, slot, class: cls, best: true});
+    showBanner(`Slot ${slot} now has the best stats the game allows for a class ${cls} ship of its type. ${UNSAVED}`, false);
     await loadStats(slot); await loadShips();
   });
 }
 
-function chooseSlot(ship) {
-  const lines = S.ships.map(s => `${s.index}: ${s.name || '(unnamed)'} (${s.category})${ship && s.ship !== ship ? '  <- different ship type, look will not match' : ''}`);
-  const v = prompt('Apply this seed to which ship slot?\n\n' + lines.join('\n'), S.slot ?? '');
-  if (v === null || v.trim() === '') return null;
-  const n = parseInt(v, 10);
-  return S.ships.some(s => s.index === n) ? n : (toast('No ship in slot ' + v, true), null);
-}
 async function applySeed(seed, ship) {
   // Where it goes: the Designer's "Into your save" choice when on that page, otherwise ask.
   let slot = null;
   const inDesigner = $('#dTarget') && $('#dTarget').offsetParent && $('#dShip').value === ship;
   if (inDesigner) slot = $('#dTarget').value;
-  else if (S.edit && S.edit.ship === ship && confirm(`Put ${seed} on slot ${S.edit.slot} (${S.edit.name})?`)) slot = String(S.edit.slot);
+  else if (S.edit && S.edit.ship === ship) slot = String(S.edit.slot);
   else {
     const free = (S.empty || []).length;
-    const lines = S.ships.map(s => `${s.index}: ${s.name || '(unnamed)'} (${s.category})${s.ship !== ship ? '  <- becomes a ' + ship : ''}`);
-    const v = prompt(`Put this ${ship} (${seed}) into your save.\n\nType "new" for a new ship slot${free ? '' : ' (none free)'}, or the slot number to replace:\n\n`
-                     + lines.join('\n'), free ? 'new' : String(S.slot ?? ''));
-    if (v === null || !v.trim()) return;
-    slot = v.trim().toLowerCase();
-    if (slot !== 'new' && !S.ships.some(s => String(s.index) === slot)) return toast('No ship in slot ' + v, true);
+    const options = [{value: 'new', label: `A new ship slot${free ? '' : ' (none free)'}`, disabled: !free}].concat(S.ships.map(s =>
+      ({value: String(s.index), label: `Replace slot ${s.index}: ${s.name || '(unnamed)'} (${s.category})${s.ship !== ship ? ' -- becomes a ' + ship : ''}`})));
+    slot = await askValue(`Put this ${ship} (${seed}) into your save:`, {options, value: free ? 'new' : String(S.slot ?? S.ships[0]?.index ?? ''), yes: 'Next'});
+    if (!slot) return;
   }
   const label = slot === 'new' ? 'a new ship slot' : `slot ${slot}`;
-  if (inDesigner && !confirm(`Put ${ship} ${seed} into ${label}? A backup of your save is made first.`)) return;
   await guard(async () => {
-    const r = await post('/api/ship/put', {path: S.path, slot, ship, seed});
-    showBanner(`Saved: ${r.what} is now a ${ship} (${r.seed}) in ${r.file}. Backup made. Load this save in the game to see it.`, false);
+    if (slot !== 'new' && !await ask(`Put ${ship} ${seed} into ${label}? The ship there becomes this one.`, 'Put it in')) return;
+    const r = await edit('/api/ship/put', {path: S.path, slot, ship, seed});
+    showBanner(`${r.what} is now a ${ship} (${r.seed}) in your unsaved edits. Press Review & save, then load the save in the game.`, false);
     await loadShips(); if (typeof fillTargets === 'function') fillTargets();
   });
 }
@@ -306,11 +302,11 @@ function newShipPanel() {
   $('#nSeed').value = randomSeed(); sync();
   $('#nCreate').onclick = () => guard(async () => {
     const slot = +$('#nSlot').value, s = byIndex(slot);
-    if (s && !confirm(`Replace the ${s.category} in slot ${slot}?\n\nIts model, seed and colour become the new ship; its inventory & tech are kept. A backup is made first.`)) return;
     const from = $('#nFrom').value;
-    const r = await post('/api/ship/create', {path: S.path, slot, ship: $('#nModel').value,
+    if (s && !await ask(`Replace the ${s.category} in slot ${slot}?\n\nIts model, seed and colour become the new ship; its inventory & tech are kept.`, 'Replace')) return;
+    const r = await edit('/api/ship/create', {path: S.path, slot, ship: $('#nModel').value,
       seed: $('#nSeed').value.trim(), name: $('#nName').value, clone_from: from === '' ? null : +from});
-    toast(`${r.action === 'replaced' ? 'Replaced ship in' : 'Created ship in'} slot ${r.slot}. Backup made.`); S.slot = r.slot; await loadShips();
+    toast(`${r.action === 'replaced' ? 'Replaced ship in' : 'Created ship in'} slot ${r.slot}. ${UNSAVED}`); S.slot = r.slot; await loadShips();
   });
 }
 function closeNewShip() {

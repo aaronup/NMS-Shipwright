@@ -38,9 +38,37 @@ Saves are the user's real game progress (`%APPDATA%\HelloGames\NMS\st_*\*.hg`).
 - When testing in the running app, only use read-only actions (search, preview, load a design). Don't
   trigger writes ("Put in my save...", "Put this design in my save", recolour, inventory edits, import)
   unless the user asks.
-- All writes must go through `webapp.common.write(opened)` → `nms_save.save.OpenSave.write()`. That
-  refuses while `NMS.exe` is running (`GameRunning` → HTTP 409) and makes a timestamped `.bak` first.
-  Don't add a write path that skips it.
+- Edits never write the save file. Routes do `opened = open_save(path)`, change `opened.readable`,
+  then `write(opened)` (both in `webapp.common`, implemented in `webapp/drafts.py`). That puts the
+  edit into a draft of the save, kept in `<cache>/drafts/` so unsaved edits survive a restart. Only
+  `drafts.save_draft()` (the page's Save, after the player reviews the change summary) writes the
+  file. It refuses while `NMS.exe` is running or when that can't be checked (`GameRunning` → 409),
+  when the player didn't review this exact revision, or when the file changed on disk since the
+  draft started (the game saved). Then it makes a timestamped `.bak`, writes atomically (temp file +
+  `os.replace`), records the new file as the draft's base, and reads the file back to check it
+  matches the text it encoded. Don't add a write path that skips this. Edits to a draft whose file
+  changed on disk are refused too: they could never be saved. While a save or restore is writing,
+  `drafts.saving()` is true and closing the window asks first.
+- `open_save()` hands GET requests the draft tree itself: read it, never change it there. Other
+  callers get a private copy and hold the save's edit lock until the request ends. A route that
+  fails halfway therefore leaves no half-made change, and two edits never race. Code that edits
+  outside a request (the design install job) wraps the edit in `drafts.editing(path)`. Lock order:
+  a save's edit lock, then `DRAFTS_LOCK`; hold `DRAFTS_LOCK` only for bookkeeping, never across
+  file I/O.
+- Only one app process edits a save: it holds an operating-system lock on `<cache>/drafts/<key>.lock`
+  (`webapp/oslock.py`), which the OS frees when the process ends, however it ends. Others get a
+  read-only view of the file on disk; edits answer `SaveLocked` → 423. Never delete lock files and
+  never decide a lock is stale from a pid. When a process takes a save's lock (back), it forgets any
+  copy of that draft it had in memory: another process may have edited it meanwhile. Listing drafts
+  only probes their locks (`oslock.held_elsewhere`); a process holds just the save the page has
+  open and the saves it has unsaved edits in. After a crash Windows can take a moment to free the
+  lock, so a quick restart may briefly show the save as read-only until the next status poll.
+- Restoring a backup is the one direct file write: `/api/backups/restore` only stages it (only real
+  `<save>.<stamp>.bak` files beside the save), and `/api/save/commit` writes it after the player
+  confirms. Refused while the save has unsaved edits.
+- Requests that change anything must come from the app's own page: `app.py` refuses other hosts and
+  cross-site `Origin`/`Referer`/`Sec-Fetch-Site`, so another web page in a browser can't drive the
+  API. Keep new write routes as POST/DELETE behind that check.
 - Tests isolate caches via `NMS_TOOL_CACHE` set to a temp dir; follow the `Base` pattern in
   `tests/test_robustness.py`. It also purges `nms_save`/`nms_procgen`/`webapp` from `sys.modules`,
   because module-level paths are read at import.

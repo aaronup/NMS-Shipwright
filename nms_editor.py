@@ -80,6 +80,31 @@ class FileBridge:
             return {"name": os.path.basename(path), "text": f.read()}
 
 
+QUIT_WITH_EDITS = ("You have unsaved edits that are not in your game yet. "
+                   "They'll still be here next time you open Shipwright. Close anyway?")
+
+
+QUIT_WHILE_SAVING = ("Shipwright is still writing your save. Close anyway? "
+                     "(Wait a few seconds and it will finish.)")
+
+
+def confirm_close(window):
+    """Closing with unsaved edits, or mid-save: let the window ask first (pywebview's own OK/Cancel,
+    which works on every backend). Unsaved edits are kept in the draft file either way and come back
+    next time; a save cut off mid-way leaves the old file whole, but is best left to finish."""
+    try:
+        from webapp import drafts
+        busy = drafts.saving()
+        window.confirm_close = busy or drafts.dirty_any()
+    except Exception:  # can't tell: asking once too often beats losing edits silently
+        busy, window.confirm_close = False, True
+    # The backends read this dict when they show the question, so the wording can follow the moment.
+    loc = getattr(window, "localization", None)
+    if loc is not None:
+        loc["global.quitConfirmation"] = QUIT_WHILE_SAVING if busy else QUIT_WITH_EDITS
+    return True
+
+
 def main():
     threading.stack_size(16 * 1024 * 1024)  # the game-code emulator needs more than the default thread stack
     from webapp.app import app
@@ -110,9 +135,10 @@ def main():
         return in_browser("pywebview is not installed.")
     try:
         webview.settings["ALLOW_DOWNLOADS"] = True  # fallback for plain links
-        webview.create_window(APP_NAME, url, width=1440, height=920, min_size=(1100, 680),
-                              background_color="#0E1014", js_api=FileBridge())
-        webview.start()
+        window = webview.create_window(APP_NAME, url, width=1440, height=920, min_size=(1100, 680),
+                                       background_color="#0E1014", js_api=FileBridge())
+        window.events.closing += lambda: confirm_close(window)
+        webview.start(localization={"global.quitConfirmation": QUIT_WITH_EDITS})
     except Exception as e:  # no native GUI backend (e.g. WebKitGTK missing on Linux)
         return in_browser(f"Native window unavailable ({e}).")
 

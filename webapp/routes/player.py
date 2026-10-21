@@ -4,13 +4,13 @@ from __future__ import annotations
 import glob
 import os
 import re
-import shutil
 
 from flask import Blueprint, jsonify, request
 
 from nms_save import player, quests, save
 
-from webapp.common import GameRunning, body, game_running, open_save, write
+from webapp import drafts
+from webapp.common import PENDING, PENDING_LOCK, body, commit, ensure_game_closed, open_save, stage, write
 
 bp = Blueprint("player", __name__)
 
@@ -46,7 +46,7 @@ BACKUP_TIME = re.compile(r"\.(\d{8})-(\d{6})-\d+\.bak$")
 @bp.route("/api/backups")
 def api_backups():
     path = request.args.get("path")
-    open_save(path)  # validates the path
+    drafts.check_path(path)
     out = []
     for f in glob.glob(f"{path}.*.bak"):
         m = BACKUP_TIME.search(f)
@@ -60,15 +60,55 @@ def api_backups():
 def api_backups_restore():
     b = body()
     path, src = b.get("path"), b.get("file")
-    open_save(path)
-    if not src or not os.path.exists(src) or not src.startswith(path + "."):
-        raise ValueError("Unknown backup file")
-    if game_running():
-        raise GameRunning("No Man's Sky is running -- quit the game first.")
-    safety = save.backup_path_for(path)
-    shutil.copy2(path, safety)
-    with open(src, "rb") as f:
-        data = f.read()
-    with open(path, "wb") as f:
-        f.write(data)
-    return jsonify({"ok": True, "safety_copy": safety})
+    drafts.check_path(path)
+    ensure_game_closed("No Man's Sky is running -- quit the game first.")
+    data, restore = drafts.restore(path, src)  # refuses unknown files and unsaved edits
+    # Always only staged: nothing replaces the save until the player confirms the summary (/api/save/commit).
+    stage(path, save.from_bytes(src, data).readable, restore)
+    return jsonify({"ok": True, "safety_copy": None})
+
+
+@bp.route("/api/draft")
+def api_draft():
+    """Unsaved edits to this save, and whether the file changed under them. Cheap: no decoding.
+    Also marks this save as the one the page has open (it holds the save's lock)."""
+    return jsonify(drafts.state(request.args.get("path")))
+
+
+@bp.route("/api/drafts")
+def api_drafts():
+    """Every save with unsaved edits, including ones left from a previous session."""
+    return jsonify(drafts.listing())
+
+
+@bp.route("/api/draft/review", methods=["POST"])
+def api_draft_review():
+    """Every unsaved edit, compared with the file on disk."""
+    return jsonify(drafts.review(body().get("path")))
+
+
+@bp.route("/api/draft/save", methods=["POST"])
+def api_draft_save():
+    b = body()
+    return jsonify(drafts.save_draft(b.get("path"), b.get("rev")))
+
+
+@bp.route("/api/draft/discard", methods=["POST"])
+def api_draft_discard():
+    """Throw unsaved edits away; with "rev", only if they are still the ones the page showed."""
+    b = body()
+    drafts.discard(b.get("path"), b.get("rev"))
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/save/commit", methods=["POST"])
+def api_save_commit():
+    """Do a backup restore the player has just seen the summary of."""
+    return jsonify(commit(body().get("token")))
+
+
+@bp.route("/api/save/discard", methods=["POST"])
+def api_save_discard():
+    with PENDING_LOCK:
+        PENDING.pop(body().get("token"), None)
+    return jsonify({"ok": True})
